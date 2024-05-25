@@ -13,12 +13,17 @@ enum Registers {
     R_B,
     R_C,
     R_D,
-}
+};
 
 enum InstructionIDs {
     I_NOOP = 0,
 
-    
+    I_LoadImmediateByte,
+    I_AddRegistersByte,
+
+
+
+    I_DBG_PrintRegister = 0xff,
 };
 
 struct buffer {
@@ -53,20 +58,41 @@ struct buffer read_file(const char* path) {
     return res;
 }
 
+byte next_byte(struct buffer* buffer, int *index) {
+    byte b = buffer->data[*index];
+    *index += 1;
+    return b;
+}
+
 void interpret_bytecode(struct buffer* buffer) {
     byte next;
     int index = 0;
+    unsigned long long registers[16];
+    for(int i = 0; i < 16; i++)
+        registers[i] = 0;
     while(index < buffer->length) {
-        next = buffer->data[index];
+        next = next_byte(buffer, &index);
+        byte reg, val, r1, r2;
         switch(next) {
             case I_NOOP:
                 break;
-            case I_TEST:
-                printf("Hello");
+            case I_LoadImmediateByte:
+                reg = next_byte(buffer, &index);
+                val = next_byte(buffer, &index);
+                registers[reg] = val;
+                break;
+            case I_AddRegistersByte:
+                r1 = next_byte(buffer, &index);
+                r2 = next_byte(buffer, &index);
+                registers[r1] = (byte)registers[r1] + (byte)registers[r2];
+                break;
+            case I_DBG_PrintRegister:
+                reg = next_byte(buffer, &index);
+                printf("r_%d = %llu", reg, registers[reg]);
+                break;
             default:
                 break;
         }
-        index++;
     }
 }
 
