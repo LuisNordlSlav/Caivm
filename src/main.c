@@ -2,8 +2,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+#include "descriptive_types.h"
 
-typedef unsigned char byte;
 
 enum Registers {
     // R0-R9 before this, then:
@@ -15,13 +17,36 @@ enum Registers {
     R_D,
 };
 
+enum MathOps {
+    OP_EQ = 0,
+    OP_GT = 1,
+    OP_LT = 2,
+    OP_ZE = 3,
+};
+
 enum InstructionIDs {
     I_NOOP = 0,
 
-    I_LoadImmediateByte,
-    I_AddRegistersByte,
+    I_LoadImmediateByte = 0x10,
+    I_LoadImmediateShort,
+    I_LoadImmediateInt,
+    I_LoadImmediateLong,
 
+    I_AddRegistersByte = 0x20,
+    I_AddRegistersShort,
+    I_AddRegistersInt,
+    I_AddRegistersLong,
 
+    I_CmpRegisters = 0xA0,
+    I_JumpEqReg,
+    I_JumpGtReg,
+    I_JumpLtReg,
+    I_JumpZeReg,
+
+    I_JumpEqImm,
+    I_JumpGtImm,
+    I_JumpLtImm,
+    I_JumpZeImm,
 
     I_DBG_PrintRegister = 0xff,
 };
@@ -29,7 +54,7 @@ enum InstructionIDs {
 struct buffer {
     unsigned char* data;
     size_t length;
-};
+} CONTEXT;
 
 void usage(const char* this) {
     printf("USAGE: %s filename\n", this);
@@ -48,7 +73,8 @@ struct buffer read_file(const char* path) {
     }
     char* buf = malloc(size+1);
     FILE* fd = fopen(path, "r");
-    fread(buf, 1, size, fd);
+    if (fread(buf, 1, size, fd) == 0)
+        return (struct buffer) {};
     fclose(fd);
     buf[size] = 0;
     struct buffer res = (struct buffer) {
@@ -58,53 +84,140 @@ struct buffer read_file(const char* path) {
     return res;
 }
 
-byte next_byte(struct buffer* buffer, int *index) {
-    byte b = buffer->data[*index];
-    *index += 1;
+u8 next_byte(u64* index) {
+    u8 b = *(u8*)(CONTEXT.data + *(index + R_PC));
+    *(index + R_PC) += 1;
     return b;
 }
 
-void interpret_bytecode(struct buffer* buffer) {
-    byte next;
-    int index = 0;
-    unsigned long long registers[16];
-    for(int i = 0; i < 16; i++)
-        registers[i] = 0;
-    while(index < buffer->length) {
-        next = next_byte(buffer, &index);
-        byte reg, val, r1, r2;
-        switch(next) {
+u16 next_short(u64* index) {
+    u16 b = *(u16*)(CONTEXT.data + *(index + R_PC));
+    *(index + R_PC) += 1;
+    return b;
+}
+
+u32 next_int(u64* index) {
+    u32 b = *(u32*)(CONTEXT.data + *(index + R_PC));
+    *(index + R_PC) += 1;
+    return b;
+}
+
+u64 next_long(u64* index) {
+    u64 b = *(u64*)(CONTEXT.data + *(index + R_PC));
+    *(index + R_PC) += 1;
+    return b;
+}
+
+void* exec_bytecode(void* _start_offset) {
+    u64 registers[15];
+    for (int i = 0; i < 15; i++) registers[i] = 0;
+    registers[R_PC] = (u64)_start_offset;
+    u8 flags = 0;
+
+    while (registers[R_PC] < CONTEXT.length) {
+        byte next = next_byte(&registers[0]);
+        switch (next) {
             case I_NOOP:
                 break;
-            case I_LoadImmediateByte:
-                reg = next_byte(buffer, &index);
-                val = next_byte(buffer, &index);
-                registers[reg] = val;
-                break;
-            case I_AddRegistersByte:
-                r1 = next_byte(buffer, &index);
-                r2 = next_byte(buffer, &index);
-                registers[r1] = (byte)registers[r1] + (byte)registers[r2];
-                break;
-            case I_DBG_PrintRegister:
-                reg = next_byte(buffer, &index);
-                printf("r_%d = %llu", reg, registers[reg]);
-                break;
+            case I_LoadImmediateByte: {
+                u8 reg = next_byte(&registers[0]);
+                u8 val = next_byte(&registers[0]);
+                *(u8*)&registers[reg] = val;
+            } break;
+            case I_LoadImmediateShort: {
+                u8 reg = next_byte(&registers[0]);
+                u16 val = next_short(&registers[0]);
+                *(u16*)&registers[reg] = val;
+            } break;
+            case I_LoadImmediateInt: {
+                u8 reg = next_byte(&registers[0]);
+                u32 val = next_int(&registers[0]);
+                *(u32*)&registers[reg] = val;
+            } break;
+            case I_LoadImmediateLong: {
+                u8 reg = next_byte(&registers[0]);
+                u64 val = next_long(&registers[0]);
+                *(u64*)&registers[reg] = val;
+            } break;
+            case I_AddRegistersByte: {
+                u8 r1 = next_byte(&registers[0]);
+                u8 r2 = next_byte(&registers[0]);
+                *(u8*)&registers[r1] += *(u8*)&registers[r2];
+            } break;
+            case I_AddRegistersShort: {
+                u8 r1 = next_byte(&registers[0]);
+                u8 r2 = next_byte(&registers[0]);
+                *(u16*)&registers[r1] += *(u16*)&registers[r2];
+            } break;
+            case I_AddRegistersInt: {
+                u8 r1 = next_byte(&registers[0]);
+                u8 r2 = next_byte(&registers[0]);
+                *(u32*)&registers[r1] += *(u32*)&registers[r2];
+            } break;
+            case I_AddRegistersLong: {
+                u8 r1 = next_byte(&registers[0]);
+                u8 r2 = next_byte(&registers[0]);
+                *(u64*)&registers[r1] += *(u64*)&registers[r2];
+            } break;
+            case I_CmpRegisters: {
+                u8 r1 = next_byte(&registers[0]);
+                u8 r2 = next_byte(&registers[0]);
+                flags = (registers[r1] == registers[r2]) << OP_EQ |
+                        (registers[r1] >  registers[r2]) << OP_GT |
+                        (registers[r1] <  registers[r2]) << OP_LT |
+                        (registers[r1] == 0) << OP_ZE
+                ;
+            } break;
+            case I_JumpEqReg: {
+                u8 target_reg = next_byte(&registers[0]);
+                if (flags & (1 >> OP_EQ))
+                    registers[R_PC] = registers[target_reg];
+            } break;
+            case I_JumpGtReg: {
+                u8 target_reg = next_byte(&registers[0]);
+                if (flags & (1 >> OP_GT))
+                    registers[R_PC] = registers[target_reg];
+            } break;
+            case I_JumpLtReg: {
+                u8 target_reg = next_byte(&registers[0]);
+                if (flags & (1 >> OP_LT))
+                    registers[R_PC] = registers[target_reg];
+            } break;
+            case I_JumpZeReg: {
+                u8 target_reg = next_byte(&registers[0]);
+                if (flags & (1 >> OP_ZE))
+                    registers[R_PC] = registers[target_reg];
+            } break;
+            case I_JumpEqImm: {
+                u64 imm = next_long(&registers[0]);
+                if (flags & (1 >> OP_EQ))
+                    registers[R_PC] = imm;
+            } break;
+
+            case I_DBG_PrintRegister: {
+                u8 reg = next_byte(&registers[0]);
+                u64 val = registers[reg];
+                printf("r_%d = %lu\n", reg, val);
+            } break;
+
             default:
-                break;
+                printf("unexpected byte encountered: %x\n", next);
+            break;
         }
     }
+
+    return NULL;
 }
 
 int main(int argc, char** argv) {
     if (argc != 2)
         usage(*argv);
     char* path = argv[1];
-    struct buffer fdata = read_file(path);
+    CONTEXT = read_file(path);
 
-    interpret_bytecode(&fdata);
+    (void)exec_bytecode(0);
 
-    free(fdata.data);
+    free(CONTEXT.data);
     return 0;
 }
 

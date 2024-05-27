@@ -3,22 +3,22 @@ SOURCES=$(wildcard ./src/*.c)
 OBJECTS=$(patsubst ./src/%.c,./bin/%.o,$(SOURCES))
 
 ./example/main.bin: ./example/main.hex
-	@ xxd -r ./example/main.hex > ./example/main.bin
+	@ xxd -r -c 8 ./example/main.hex > ./example/main.bin
 
 $(OBJECTS): $(SOURCES)
-	$(foreach x,$(SOURCES),@ gcc -c -o $(patsubst ./src/%.c,./bin/%.o,$x) $x -Wall;)
+	$(foreach x,$(SOURCES),@ gcc -O3 -c -o $(patsubst ./src/%.c,./bin/%.o,$x) $x -Wall -Wextra -Wno-strict-aliasing;)
 
-main: $(OBJECTS)
-	@ gcc -o main $(OBJECTS)
+caivm: $(OBJECTS)
+	@ gcc -o caivm $(OBJECTS)
 
 .PHONY: build
-build: main
+build: caivm
 
 .PHONY: run
 run: build ./example/main.bin
-	@ ./main ./example/main.bin
+	@ ./caivm ./example/main.bin
 
 .PHONY: clean
 clean:
-	@ rm main
+	@ rm caivm
 	@ rm ./bin/*.o
